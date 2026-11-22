@@ -2,8 +2,8 @@
 
 | | |
 |---|---|
-| **Author** | `<FULL NAME>` |
-| **Group** | `<GROUP NUMBER>` |
+| **Author** | Ramil Imanov |
+| **Group** | M666i5 |
 | **Course** | Machine Learning — Individual Project |
 | **Twist** | Imbalance Study |
 
