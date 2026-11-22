@@ -1,0 +1,7 @@
+,val_ap,val_roc_auc,cv_ap_mean
+Logistic regression,0.5323,0.7667,0.5065
+k-NN,0.5506,0.7749,0.527
+Naive Bayes,0.5135,0.7534,0.4968
+Decision tree,0.5437,0.7699,0.5346
+Random forest,0.5752,0.7861,0.5603
+Gradient boosting,0.5689,0.788,0.5597

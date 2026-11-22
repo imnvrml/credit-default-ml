@@ -1,0 +1,521 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Predicting Credit Card Default — ML Project Report</title>
+<style>
+  @page { size: A4; margin: 17mm 17mm 18mm 17mm; }
+  :root { --accent: #1f4e79; --muted: #555; --rule: #c9d3dd; }
+  html { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  body { font-family: "Libertinus Serif", "Linux Libertine O", "Times New Roman", Georgia, serif;
+         font-size: 10.4pt; line-height: 1.38; color: #111; margin: 0; background: #fff;
+         text-align: justify; hyphens: auto; }
+  h1 { font-size: 18pt; color: var(--accent); margin: 0 0 4px; text-align: left; line-height: 1.2; }
+  h2 { font-size: 12.6pt; color: var(--accent); margin: 14px 0 5px; padding-bottom: 2px;
+       border-bottom: 1.2px solid var(--rule); break-after: avoid; }
+  h3 { font-size: 10.8pt; margin: 9px 0 3px; break-after: avoid; }
+  p { margin: 0 0 6px; }
+  ul, ol { margin: 0 0 6px; padding-left: 20px; }
+  li { margin-bottom: 2px; }
+  .meta { color: var(--muted); font-size: 9.8pt; margin-bottom: 8px; text-align: left; }
+  .meta b { color: #111; }
+  .abstract { background: #f3f6f9; border-left: 3px solid var(--accent); padding: 7px 10px;
+              font-size: 9.9pt; margin: 6px 0 4px; }
+  figure { margin: 7px 0 9px; break-inside: avoid; text-align: center; }
+  figure img { width: 100%; }
+  figure.narrow img { width: 78%; }
+  figcaption { font-size: 8.9pt; color: #333; text-align: justify; margin-top: 2px; line-height: 1.3; }
+  figcaption b { color: var(--accent); }
+  table { border-collapse: collapse; width: 100%; font-size: 8.7pt; margin: 4px 0 3px;
+          break-inside: avoid; text-align: left; line-height: 1.25; }
+  th, td { padding: 2.4px 5px; border-bottom: 0.6px solid #ddd; vertical-align: top; }
+  thead th { border-top: 1.2px solid #333; border-bottom: 1px solid #333; background: #f3f6f9; }
+  tbody tr:last-child td { border-bottom: 1.2px solid #333; }
+  td.n, th.n { text-align: right; font-variant-numeric: tabular-nums; white-space: nowrap; }
+  tr.best td { background: #fff4e5; font-weight: 600; }
+  .tcap { font-size: 8.9pt; color: #333; margin: 8px 0 1px; break-after: avoid; }
+  .tcap b { color: var(--accent); }
+  code { font-family: "DejaVu Sans Mono", Menlo, monospace; font-size: 8.6pt; background: #f2f2f2;
+         padding: 0 2px; border-radius: 2px; }
+  .key { background: #eef5ee; border-left: 3px solid #4a8a4a; padding: 5px 9px; margin: 6px 0;
+         font-size: 9.9pt; break-inside: avoid; }
+  .refs li { font-size: 9pt; margin-bottom: 3px; text-align: left; }
+  .pb { break-before: page; }
+  .small { font-size: 9pt; }
+  a { color: var(--accent); text-decoration: none; }
+</style>
+</head>
+<body>
+
+<h1>Predicting Credit Card Default:<br>An End-to-End Machine Learning Study with an Imbalance Twist</h1>
+<div class="meta">
+  <b>Author:</b> &lt;FULL NAME&gt; &nbsp;·&nbsp; <b>Group:</b> &lt;GROUP NUMBER&gt; &nbsp;·&nbsp;
+  <b>Course:</b> Machine Learning, Individual Project &nbsp;·&nbsp; <b>Date:</b> December 2026<br>
+  <b>Code:</b> <a href="https://github.com/imnvrml/credit-default-ml">github.com/imnvrml/credit-default-ml</a>
+  (notebook <code>credit_default_ml.ipynb</code> reproduces every number and figure) &nbsp;·&nbsp;
+  <b>Twist:</b> Imbalance Study
+</div>
+
+<div class="abstract">
+<b>Abstract.</b> We predict whether a credit-card client will default next month from six months of
+billing and repayment history. The data are 30,000 clients of a Taiwanese bank, of whom 22.1 % default.
+Six model families are tuned with identical 5-fold cross-validation and compared on PR-AUC, and the
+operating threshold is chosen to minimise an asymmetric business cost in which a missed defaulter costs
+five times a false alarm. Gradient boosting and random forest are statistically tied (PR-AUC 0.560 ± 0.020).
+We deploy gradient boosting because it trains about 7× faster. On the untouched test set it reaches
+PR-AUC 0.570 and ROC-AUC 0.781. At the cost-optimal threshold t = 0.16 it catches 75 % of defaulters and
+lowers the expected cost per client by 31 % compared with a logistic-regression baseline. Error analysis
+shows that 94 % of the remaining missed defaulters have a spotless repayment record, so the main limit
+is the features, not the model. In the imbalance study, class weights, oversampling, SMOTE and
+undersampling never improve the ranking of clients. They only shift the probabilities and spoil
+calibration, while simply tuning the threshold gives the lowest cost.
+</div>
+
+<h2>1&nbsp; Problem definition</h2>
+<p><b>Data.</b> We use the <i>Default of Credit Card Clients</i> dataset [1, 2] from the UCI repository
+(CC BY 4.0). It describes 30,000 clients of a Taiwanese bank between April and September 2005, with
+23 features:</p>
+<ul>
+  <li>the credit limit <code>LIMIT_BAL</code>;</li>
+  <li>sex, education, marital status and age;</li>
+  <li>the monthly repayment status <code>PAY_1…PAY_6</code> (−2 = no consumption, −1 = paid in full,
+      0 = revolving credit, <i>k</i> = <i>k</i> months late);</li>
+  <li>six monthly bill amounts <code>BILL_AMT1…6</code> and six payment amounts <code>PAY_AMT1…6</code>
+      (NT$).</li>
+</ul>
+<p><b>Task.</b> Binary classification: <i>will the client default on the October 2005 payment?</i></p>
+<p><b>Why it matters and what a mistake costs.</b> Banks use such scores to reduce credit limits, start
+collection early or offer restructuring. The two errors are not equally costly:</p>
+<ul>
+  <li>A <b>false negative</b>, a defaulter treated as safe, loses part of an outstanding balance worth
+      tens of thousands of NT$.</li>
+  <li>A <b>false positive</b> costs a review call, some goodwill and some interest income.</li>
+</ul>
+<p>We assume <b>C<sub>FN</sub> = 5 · C<sub>FP</sub></b>. The exact ratio is a business decision.</p>
+<p><b>Metrics.</b> Accuracy is meaningless here, because always predicting "no default" already gives 78 %.
+We therefore use three kinds of metric:</p>
+<ol>
+  <li><b>PR-AUC (average precision)</b> is the primary metric for model selection. It is
+      threshold-free and focuses on the minority class, which makes it more informative than ROC-AUC
+      under imbalance [8].</li>
+  <li>The <b>expected cost per client</b>, (5·FN + FP)/<i>n</i>, is used to choose the operating
+      threshold.</li>
+  <li>ROC-AUC, recall, precision, F1/F2, balanced accuracy and the Brier score are reported as
+      supporting metrics.</li>
+</ol>
+<p>For calibrated probabilities, decision theory gives the cost-optimal threshold
+t* = C<sub>FP</sub>/(C<sub>FP</sub>+C<sub>FN</sub>) = 1/6 [7].</p>
+
+<h2>2&nbsp; Exploratory analysis and preprocessing</h2>
+<p><b>Data quality.</b></p>
+<ul>
+  <li>There are no missing values.</li>
+  <li><code>EDUCATION</code> contains undocumented codes 0, 5 and 6 (345 rows) and <code>MARRIAGE</code>
+      contains code 0 (54 rows). We merged them into the documented "other" categories. This is a fixed
+      recoding that learns nothing from the data, so it is safe before the split.</li>
+  <li>There are 35 exact duplicate rows. We kept them, because with 23 coarse features two genuine
+      clients can share a profile (e.g. both have zero bills).</li>
+</ul>
+
+<figure>
+  <img src="../figures/fig01_eda_overview.png" alt="EDA overview">
+  <figcaption><b>Figure 1.</b> (a) 22.1 % of clients default. (b) The default rate rises sharply with the
+  September repayment delay <code>PAY_1</code>. (c) Defaulters have lower credit limits. (d) The age
+  distributions are similar.</figcaption>
+</figure>
+
+<p><b>Findings.</b></p>
+<ul>
+  <li><b>Recent repayment status is by far the strongest signal</b> (Fig. 1b). Clients who were on time
+      in September default 13–17 % of the time. Clients one month late default 34 % of the time, and
+      clients two or more months late about 70 %. <code>PAY_1</code> has the highest Spearman
+      correlation with the target (0.29), followed by the earlier <code>PAY_k</code> (0.16–0.22),
+      <code>LIMIT_BAL</code> (−0.17) and the recent payment amounts (−0.15).</li>
+  <li><b>Demographic effects are weak</b> (Fig. 2a). Age is mildly U-shaped, with the lowest rate at
+      25–35. The small "other" education group defaults only 7 % of the time.</li>
+  <li><b>The bills are strongly inter-correlated</b> (Spearman ρ ≥ 0.73), and so are the six
+      <code>PAY_k</code> columns. This redundancy matters for Naive Bayes and for interpreting linear
+      coefficients.</li>
+  <li><b>The monetary features are extremely right-skewed</b> (skewness up to 30). About 2 % of bills are
+      negative, meaning the client is in credit, and 7 % of clients owe more than their limit
+      (Fig. 3). These values are genuine, not errors, so we <i>transform</i> them rather than remove
+      them.</li>
+</ul>
+
+<figure>
+  <img src="../figures/fig02_eda_groups_corr.png" alt="groups and correlation">
+  <figcaption><b>Figure 2.</b> (a) Default rate by demographic group; the dashed line is the overall
+  rate. (b) Spearman correlation matrix: note the block structure among the <code>PAY_k</code> columns
+  and among the bills.</figcaption>
+</figure>
+
+<figure class="narrow">
+  <img src="../figures/fig03_outliers.png" alt="outliers">
+  <figcaption><b>Figure 3.</b> Heavy tails in the monetary features (a). After a signed log transform
+  (b), the outliers are compressed while their sign and order are preserved.</figcaption>
+</figure>
+
+<p><b>Feature engineering.</b> We added five row-wise features. Each depends only on the client's own
+row, so none of them can leak information:</p>
+<ul>
+  <li><code>MAX_DELAY</code>: the worst delay over the six months;</li>
+  <li><code>N_DELAYS</code>: the number of months the client was late;</li>
+  <li><code>AVG_UTIL</code>: the mean bill divided by the limit, clipped to [−1, 3];</li>
+  <li><code>PAY_RATIO</code>: the total paid divided by the total billed;</li>
+  <li><code>LAST_PAY_RATIO</code>: the September payment divided by the August bill.</li>
+</ul>
+
+<p><b>Split and leakage control.</b> We made a single stratified split into <b>70 % train
+(21,000) / 15 % validation (4,500) / 15 % test (4,500)</b> with seed 42.</p>
+<ul>
+  <li>All learned preprocessing (scalers, feature selection, resamplers) sits <i>inside</i>
+      scikit-learn/imbalanced-learn pipelines, so in cross-validation it is fitted on the training
+      folds only.</li>
+  <li>The validation set is used only for model checks, threshold selection and error analysis.</li>
+  <li>The test set is used exactly once (Section 8).</li>
+</ul>
+
+<p class="tcap"><b>Table 1.</b> Preprocessing (fitted on training folds only).</p>
+<table>
+<thead><tr><th>Columns</th><th>Treatment</th><th>Justification</th></tr></thead>
+<tbody>
+<tr><td><code>LIMIT_BAL</code>, <code>BILL_AMT*</code>, <code>PAY_AMT*</code></td><td>sign(x)·log(1+|x|), then standardise</td><td>heavy tails; keeps negative balances</td></tr>
+<tr><td><code>PAY_*</code>, <code>MAX_DELAY</code>, <code>N_DELAYS</code></td><td>standardise, kept ordinal</td><td>codes are ordered by severity</td></tr>
+<tr><td><code>AGE</code>, ratio features</td><td>standardise</td><td>ratios already clipped</td></tr>
+<tr><td><code>SEX</code>, <code>EDUCATION</code>, <code>MARRIAGE</code></td><td>one-hot</td><td>nominal categories</td></tr>
+<tr><td>k-NN, Naive Bayes only</td><td><code>SelectKBest</code> (ANOVA F), <i>k</i> tuned</td><td>distance dilution / independence assumption</td></tr>
+</tbody>
+</table>
+<p>The same 34-column representation is fed to every model to keep the comparison fair. Scaling does
+not affect the trees.</p>
+
+<h2>3&nbsp; Baseline</h2>
+<p>We use two reference points, evaluated with the same 5-fold CV as all other models (Table 3):</p>
+<ul>
+  <li>A <b>dummy</b> prior classifier scores PR-AUC 0.221 (equal to the prevalence) with recall 0 and a
+      cost of 1.106 per client.</li>
+  <li>A <b>plain logistic regression</b> with default settings scores PR-AUC <b>0.506 ± 0.012</b> and
+      ROC-AUC 0.759. At the default threshold of 0.5 it finds only 30 % of defaulters, at a cost of
+      0.812.</li>
+</ul>
+<p>Every later result is read relative to these numbers.</p>
+
+<h2>4&nbsp; Models</h2>
+<p class="tcap"><b>Table 2.</b> Model families, why each is a reasonable candidate, and which
+assumptions our data may violate.</p>
+<table>
+<thead><tr><th style="width:17%">Model</th><th style="width:40%">Why a candidate</th><th>Assumptions our data may violate</th></tr></thead>
+<tbody>
+<tr><td>Logistic regression (elastic net)</td><td>Interpretable coefficients and calibrated probabilities; the industry standard for credit scoring.</td><td>Linear log-odds, while the delay effect is step-like (Fig. 1b); collinear bills, which the penalty mitigates.</td></tr>
+<tr><td>k-nearest neighbours</td><td>Non-parametric; "similar clients behave alike".</td><td>That Euclidean or Manhattan distance is meaningful across 34 mixed features of very different relevance; prediction is slow.</td></tr>
+<tr><td>Gaussian Naive Bayes</td><td>Very fast, with few parameters.</td><td>Conditional independence (strongly violated by the near-duplicate <code>PAY_k</code> and bills); Gaussian features (skewed, discrete).</td></tr>
+<tr><td>Decision tree</td><td>Captures thresholds such as "≥ 2 months late"; readable.</td><td>High variance; axis-aligned splits only.</td></tr>
+<tr><td>Random forest [5]</td><td>Bagging reduces tree variance; robust to outliers and scaling.</td><td>Few; correlated features share importance.</td></tr>
+<tr><td>Gradient boosting (histogram) [6]</td><td>Usually the strongest model on tabular data; models interactions.</td><td>Can overfit without regularisation (we tune the learning rate, leaf size and L2).</td></tr>
+</tbody>
+</table>
+<p>We did not include kernel SVMs. Their training time grows roughly quadratically with the 21k rows,
+which would make 100 tuning fits impractical, and a linear decision boundary is already covered by
+logistic regression.</p>
+
+<h2>5&nbsp; Evaluation and tuning</h2>
+<p><b>Protocol.</b></p>
+<ul>
+  <li>Every family is tuned by <b>randomized search over 20 configurations</b>, so all models get the
+      same budget.</li>
+  <li>The search uses the <b>same</b> stratified 5-fold CV object (seed 42) and optimises PR-AUC.</li>
+  <li>For the selected configuration we report the mean ± standard deviation over the 5 folds of every
+      metric (Table 3).</li>
+  <li>The search spaces and the selected hyperparameters are listed in Appendix A.</li>
+</ul>
+
+<p class="tcap"><b>Table 3.</b> 5-fold CV on the training set (mean ± std), at the default threshold
+of 0.5 for the threshold-dependent metrics. Fit time is the mean per fit. The selected model is
+highlighted.</p>
+<table>
+<thead><tr><th>Model</th><th class="n">PR-AUC</th><th class="n">ROC-AUC</th><th class="n">Recall</th><th class="n">Precision</th><th class="n">F1</th><th class="n">Cost/client</th><th class="n">Fit (s)</th></tr></thead>
+<tbody>
+<tr><td>Dummy (prior)</td><td class="n">0.221 ± 0.000</td><td class="n">0.500 ± 0.000</td><td class="n">0.000</td><td class="n">0.000</td><td class="n">0.000</td><td class="n">1.106 ± 0.000</td><td class="n">0.05</td></tr>
+<tr><td>Logistic regr. (default)</td><td class="n">0.506 ± 0.012</td><td class="n">0.759 ± 0.010</td><td class="n">0.299</td><td class="n">0.640</td><td class="n">0.408</td><td class="n">0.812 ± 0.013</td><td class="n">0.11</td></tr>
+<tr><td>Logistic regr. (tuned)</td><td class="n">0.507 ± 0.012</td><td class="n">0.759 ± 0.010</td><td class="n">0.297</td><td class="n">0.644</td><td class="n">0.406</td><td class="n">0.814 ± 0.012</td><td class="n">1.10</td></tr>
+<tr><td>k-NN</td><td class="n">0.527 ± 0.020</td><td class="n">0.771 ± 0.012</td><td class="n">0.367</td><td class="n">0.639</td><td class="n">0.466</td><td class="n">0.746 ± 0.015</td><td class="n">0.09*</td></tr>
+<tr><td>Gaussian Naive Bayes</td><td class="n">0.497 ± 0.015</td><td class="n">0.752 ± 0.007</td><td class="n">0.542</td><td class="n">0.481</td><td class="n">0.510</td><td class="n">0.636 ± 0.013</td><td class="n">0.13</td></tr>
+<tr><td>Decision tree</td><td class="n">0.535 ± 0.018</td><td class="n">0.771 ± 0.011</td><td class="n">0.347</td><td class="n">0.665</td><td class="n">0.455</td><td class="n">0.762 ± 0.016</td><td class="n">0.30</td></tr>
+<tr><td>Random forest</td><td class="n">0.560 ± 0.019</td><td class="n">0.783 ± 0.011</td><td class="n">0.353</td><td class="n">0.668</td><td class="n">0.462</td><td class="n">0.754 ± 0.012</td><td class="n">19.4</td></tr>
+<tr class="best"><td>Gradient boosting</td><td class="n">0.560 ± 0.020</td><td class="n">0.785 ± 0.012</td><td class="n">0.352</td><td class="n">0.673</td><td class="n">0.462</td><td class="n">0.755 ± 0.015</td><td class="n">2.76</td></tr>
+</tbody>
+</table>
+<p class="small">* k-NN "fitting" only stores the data; its cost is paid at prediction time.</p>
+
+<figure>
+  <img src="../figures/fig04_model_comparison.png" alt="model comparison">
+  <figcaption><b>Figure 4.</b> (a) PR-AUC on each CV fold, with grey lines connecting the same fold
+  across models; the dashed line is the logistic-regression baseline. (b) The CV estimate agrees with
+  the held-out validation set (validation PR-AUC 0.51–0.58), so the tuning did not overfit the folds.</figcaption>
+</figure>
+
+<p><b>Results.</b></p>
+<ul>
+  <li><b>The two ensembles rank clients best</b> (PR-AUC 0.560, ROC-AUC ≈ 0.785). That is +0.054 over
+      the logistic baseline and more than 2.5× the dummy.</li>
+  <li>The decision tree (0.535) and k-NN (0.527) are next. k-NN works best with only 12 selected
+      features and a very large neighbourhood (<i>k</i> = 101), which is a sign of noisy local
+      structure.</li>
+  <li><b>Naive Bayes is the weakest ranker</b> (0.497), as expected from its violated independence
+      assumption. It has the highest recall at t = 0.5 only because its probabilities are
+      over-confident.</li>
+  <li><b>Tuning did not improve logistic regression</b> (0.507 vs 0.506). The selected penalty is a pure
+      L1 (lasso, C = 0.2), but with 21k rows and 34 features there is little variance for any penalty
+      to remove. Section 6 confirms that its problem is bias.</li>
+</ul>
+<p><b>Model selection.</b> The fold standard deviation (≈ 0.02) is ten times larger than the
+difference between the two ensembles (0.0005), and in the paired per-fold comparison gradient boosting
+wins 2 of 5 folds. We fixed our selection rule in advance: <i>among the models within one standard
+deviation of the best, choose the cheapest to train</i>. This selects <b>gradient boosting</b>, which
+trains in 2.8 s against 19.4 s for the random forest.</p>
+
+<p><b>Operating threshold.</b> With t = 0.5 the selected model catches only 36 % of defaulters on the
+validation set. Minimising the expected cost over thresholds on the <i>validation</i> set gives
+<b>t = 0.16</b> (Fig. 5), almost exactly the Bayes-optimal 1/6, which indicates that the model's
+probabilities are well calibrated. At t = 0.16 recall rises from 0.36 to <b>0.76</b>, precision falls
+from 0.71 to 0.38, and the expected cost drops from 0.744 to <b>0.544</b> per client (−27 %).</p>
+
+<figure>
+  <img src="../figures/fig05_threshold.png" alt="threshold">
+  <figcaption><b>Figure 5.</b> Validation set, gradient boosting. (a) Expected cost per client as a
+  function of the threshold: the minimum (t = 0.16) almost coincides with the theoretical 1/6.
+  (b) The precision–recall trade-off.</figcaption>
+</figure>
+
+<h2>6&nbsp; Analysis and interpretation</h2>
+<h3>6.1&nbsp; Learning curves: bias, variance, and more data</h3>
+<figure>
+  <img src="../figures/fig06_learning_curves.png" alt="learning curves">
+  <figcaption><b>Figure 6.</b> Learning curves (5-fold CV on the training set, ±1 std) for the selected
+  model and two contrasting models.</figcaption>
+</figure>
+<ul>
+  <li><b>Logistic regression is high-bias.</b> Its training and CV scores are almost identical (0.509 vs
+      0.507) and flat, so more data cannot help; only more flexible models or better features can.</li>
+  <li><b>Gradient boosting shows moderate variance.</b> There is a train–CV gap of 0.076 (0.636 vs
+      0.560). Its CV curve rose from 0.533 at 10 % of the data to 0.560, but the last step added only
+      0.001, so more rows of the same kind would bring small gains at best.</li>
+  <li><b>The decision tree benefits most from data</b> (0.436 → 0.535).</li>
+</ul>
+<p>All the curves plateau below 0.6. Together with the error analysis, this indicates that the limit is
+the information contained in the features.</p>
+
+<h3>6.2&nbsp; Feature importance</h3>
+<figure>
+  <img src="../figures/fig07_feature_importance.png" alt="importance">
+  <figcaption><b>Figure 7.</b> (a) Permutation importance of gradient boosting on the validation set
+  (drop in PR-AUC, 10 repeats). (b) Coefficients of the tuned logistic regression on standardised
+  features; orange coefficients increase the default risk.</figcaption>
+</figure>
+<p>Permutation importance [5] is computed on the raw columns through the whole pipeline, so it can be
+read in the original feature space.</p>
+<ul>
+  <li><b>Gradient boosting relies overwhelmingly on <code>MAX_DELAY</code> (0.118) and
+      <code>PAY_1</code> (0.094).</b> Every other column contributes less than 0.012. This agrees with
+      the EDA and with credit-scoring practice: recent and severe arrears are the best predictors of
+      the next default.</li>
+  <li><b>Logistic regression uses the same evidence.</b> <code>N_DELAYS</code>, <code>PAY_1</code> and
+      <code>MAX_DELAY</code> increase the risk. A higher <code>LIMIT_BAL</code> reduces it, because
+      banks grant high limits to clients they already trust.</li>
+  <li><b>Two results are domain-implausible, and we explain rather than trust them:</b>
+    <ul>
+      <li>The strong negative weight on <code>EDUCATION_4</code> ("other") rests on only 468 clients
+          with a 7 % default rate.</li>
+      <li>The negative coefficients of <code>PAY_2</code> and <code>PAY_4</code> are an artefact of
+          collinearity among the six <code>PAY_k</code> columns, not a protective effect.</li>
+    </ul>
+  </li>
+  <li>The L1 penalty set 4 of the 34 coefficients exactly to zero.</li>
+</ul>
+
+<h3>6.3&nbsp; Error analysis</h3>
+<figure>
+  <img src="../figures/fig08_error_analysis.png" alt="errors">
+  <figcaption><b>Figure 8.</b> Validation set at t = 0.16. (a) Confusion matrix. (b) Predicted
+  probabilities by outcome: missed defaulters (FN) are indistinguishable from true negatives.
+  (c) Recall among defaulters with and without any delay in the last six months.</figcaption>
+</figure>
+<p>We examined the 237 missed defaulters and 1,261 false alarms on the validation set, comparing the
+median profile of each outcome group and the most confident mistakes.</p>
+<ul>
+  <li><b>Missed defaulters look like model clients.</b> They have a median <code>PAY_1</code> of 0, no
+      delays in six months, a median limit of NT$ 160k and 24 % utilisation.</li>
+  <li>The model catches <b>98 %</b> of defaulters who were late at least once, but only <b>37 %</b> of
+      those with a clean record (Fig. 8c). <b>94 % of all missed defaulters were never late.</b></li>
+  <li>The most confident misses (predicted risk ≈ 3 %) are high-limit clients (up to NT$ 420k) who
+      paid in full every month.</li>
+  <li>Their probabilities overlap completely with those of true negatives (Fig. 8b), so <i>no
+      threshold</i> can separate them. Data on income, other debts or job loss would be needed.</li>
+  <li><b>False alarms are mostly a deliberate consequence of the cost-based threshold.</b> 57 % of them
+      have past delays: at t = 0.16 the model flags 88 % of non-defaulters who were ever late. The most
+      confident false alarms were two months late in <i>every</i> one of the last six months and still
+      paid. Under a 5:1 cost ratio, flagging such clients is the right economic decision.</li>
+</ul>
+
+<h2>7&nbsp; Twist: Imbalance study</h2>
+<p><b>Question.</b> With a 22 % default rate, how much does imbalance hurt, and which remedy is best:
+class re-weighting, resampling (random oversampling, SMOTE [4], random undersampling), or simply moving
+the threshold? What changes when defaults become much rarer?</p>
+<p><b>Experiment 1 (natural imbalance).</b></p>
+<ul>
+  <li>We use gradient boosting and logistic regression with their tuned hyperparameters.</li>
+  <li>Each strategy is evaluated by the same 5-fold CV on the training set.</li>
+  <li>Resamplers sit inside an <code>imblearn</code> pipeline [3], so <i>only training folds are
+      resampled</i> and every evaluation fold keeps the true distribution.</li>
+  <li>Each strategy is tested at t = 0.5 and with a cost-tuned threshold. The tuned threshold comes
+      from <code>TunedThresholdClassifierCV</code>, which uses an inner 3-fold CV within the training
+      fold.</li>
+</ul>
+
+<figure>
+  <img src="../figures/fig09_twist_strategies.png" alt="twist experiment 1">
+  <figcaption><b>Figure 9.</b> Experiment 1 (5-fold CV, mean ± std). (a) PR-AUC is unchanged or worse
+  under every remedy. (b) Re-weighting and resampling spoil the probabilities (higher Brier score).
+  (c, d) At t = 0.5 the remedies raise recall and cut cost, but tuning the threshold of the unweighted
+  model achieves the same recall at the lowest cost.</figcaption>
+</figure>
+
+<p class="tcap"><b>Table 4.</b> Experiment 1, gradient boosting (5-fold CV, mean; std of cost in
+brackets).</p>
+<table>
+<thead><tr><th>Strategy</th><th class="n">PR-AUC</th><th class="n">Brier</th><th class="n">Recall @0.5</th><th class="n">Cost @0.5</th><th class="n">Recall @tuned t</th><th class="n">Cost @tuned t</th></tr></thead>
+<tbody>
+<tr class="best"><td>No remedy</td><td class="n">0.560</td><td class="n">0.134</td><td class="n">0.352</td><td class="n">0.755 (0.015)</td><td class="n">0.751</td><td class="n">0.544 (0.027)</td></tr>
+<tr><td>Class weights (balanced)</td><td class="n">0.558</td><td class="n">0.178</td><td class="n">0.637</td><td class="n">0.565 (0.019)</td><td class="n">0.751</td><td class="n">0.550 (0.024)</td></tr>
+<tr><td>Random oversampling</td><td class="n">0.555</td><td class="n">0.172</td><td class="n">0.627</td><td class="n">0.568 (0.020)</td><td class="n">0.781</td><td class="n">0.549 (0.019)</td></tr>
+<tr><td>SMOTE</td><td class="n">0.542</td><td class="n">0.145</td><td class="n">0.442</td><td class="n">0.685 (0.014)</td><td class="n">0.752</td><td class="n">0.568 (0.017)</td></tr>
+<tr><td>Random undersampling</td><td class="n">0.548</td><td class="n">0.185</td><td class="n">0.653</td><td class="n">0.564 (0.022)</td><td class="n">0.739</td><td class="n">0.554 (0.016)</td></tr>
+</tbody>
+</table>
+
+<p><b>Findings of Experiment 1.</b></p>
+<ol>
+  <li><b>No remedy improves the ranking.</b> PR-AUC falls slightly under every remedy, and
+      <b>SMOTE hurts the most</b> (0.542). SMOTE interpolates one-hot and ordinal delay codes into
+      values that never occur in reality. The same pattern holds for logistic regression (0.506 → 0.501).</li>
+  <li><b>The remedies work by inflating the probabilities.</b> This is equivalent to lowering the
+      threshold, and the price is calibration: the Brier score rises from 0.134 to 0.17–0.19.</li>
+  <li><b>Threshold tuning alone gives the lowest cost</b> (0.544) while keeping honest probabilities and
+      needing no synthetic data. Once each strategy's threshold is tuned, all of them reach about the
+      same cost. This confirms that the remedies were only ever shifting the decision boundary.</li>
+</ol>
+
+<p><b>Experiment 2 (artificially stronger imbalance).</b></p>
+<ul>
+  <li>We keep all non-defaulters and subsample the defaulters in both the training and the validation
+      set to reach default rates of 10 %, 5 %, 2 % and 1 %, repeated with 5 seeds.</li>
+  <li>Gradient boosting is trained three ways: with no remedy at t = 0.5, with class weights at
+      t = 0.5, and with no remedy at a cost-tuned threshold.</li>
+</ul>
+
+<figure>
+  <img src="../figures/fig10_twist_rates.png" alt="twist experiment 2">
+  <figcaption><b>Figure 10.</b> Experiment 2 (mean ± std over 5 seeds). In (a) and (b) the "no remedy"
+  lines coincide, because threshold tuning does not change the probabilities. (a, b) Ranking quality
+  survives rarer defaults. (c, d) The decision rule breaks.</figcaption>
+</figure>
+
+<p><b>Findings of Experiment 2.</b></p>
+<ol start="4">
+  <li><b>The ranking survives rarer defaults.</b> ROC-AUC falls only from 0.79 to about 0.76–0.77,
+      and the PR-AUC lift over chance even <i>grows</i> from 2.6× to about 5–6×.</li>
+  <li><b>The default threshold fails.</b> Recall at t = 0.5 collapses from 0.35 to 0.10 at a 10 %
+      default rate and to <b>0</b> at 5 % and below, because the model never predicts "default".</li>
+  <li><b>At extreme imbalance, the "right" remedy depends on the costs.</b> At a 1 % default rate
+      the cost-optimal threshold flags <i>nobody</i>: the model cannot reach the precision above 1/6
+      that would justify a flag when a miss costs only 5× a false alarm. Class weights keep recall
+      at 0.54, but at <b>4 % precision</b> (about 24 false alarms per defaulter caught) and with three
+      times the expected cost (0.156 vs 0.049).</li>
+</ol>
+<p>"Balanced" weights implicitly assume a cost ratio equal to the class ratio, 99:1 at a 1 % default
+rate. That is justified only if a missed default really costs that much.</p>
+
+<div class="key"><b>Twist conclusion.</b> Imbalance damages the <i>decision rule</i>, not the
+<i>learned ranking</i>. The cleanest remedy is to keep the probabilities calibrated and choose the
+threshold from the real costs. Re-weighting and resampling are a blunt, implicit way to do the same,
+and they cost calibration. SMOTE is counter-productive on these discrete features. We therefore
+deploy the unweighted model with the cost-tuned threshold.</div>
+
+<h2>8&nbsp; Final evaluation on the test set</h2>
+<p>The selected pipeline is the tuned gradient boosting trained on the training set, with the
+threshold t = 0.16 chosen on the validation set. It was evaluated <b>once</b> on the 4,500 untouched test
+clients. The 95 % confidence intervals come from 1,000 bootstrap resamples of the test predictions.</p>
+<p class="tcap"><b>Table 5.</b> Test-set results.</p>
+<table>
+<thead><tr><th>Model / threshold</th><th class="n">PR-AUC</th><th class="n">ROC-AUC</th><th class="n">Recall</th><th class="n">Precision</th><th class="n">F2</th><th class="n">Bal. acc.</th><th class="n">Cost/client</th></tr></thead>
+<tbody>
+<tr class="best"><td>Gradient boosting, t = 0.16</td><td class="n">0.570</td><td class="n">0.781</td><td class="n">0.749</td><td class="n">0.364</td><td class="n">0.618</td><td class="n">0.689</td><td class="n">0.567</td></tr>
+<tr><td>&nbsp;&nbsp;95 % bootstrap CI</td><td class="n">[0.537, 0.603]</td><td class="n">[0.765, 0.798]</td><td class="n">[0.722, 0.772]</td><td class="n">[0.344, 0.385]</td><td class="n">[0.595, 0.639]</td><td class="n">[0.673, 0.703]</td><td class="n">[0.536, 0.602]</td></tr>
+<tr><td>Gradient boosting, t = 0.5</td><td class="n">0.570</td><td class="n">0.781</td><td class="n">0.356</td><td class="n">0.683</td><td class="n">0.394</td><td class="n">0.655</td><td class="n">0.749</td></tr>
+<tr><td>Baseline: plain logistic regr., t = 0.5</td><td class="n">0.507</td><td class="n">0.750</td><td class="n">0.293</td><td class="n">0.641</td><td class="n">0.328</td><td class="n">0.623</td><td class="n">0.818</td></tr>
+</tbody>
+</table>
+<p>The test scores agree with the CV and validation estimates (CV PR-AUC 0.560 ± 0.020; validation cost
+0.544), so there is no sign of optimistic selection bias. Against the baseline, the final model raises
+PR-AUC by 0.063, catches <b>2.6× as many defaulters</b> (745 of 995, against about 291), and lowers the
+expected cost by <b>31 %</b> (0.567 vs 0.818). The price is more false alarms: 1,302 flagged clients who
+pay.</p>
+
+<h2>9&nbsp; Conclusion</h2>
+<p><b>What we would deploy.</b> The tuned <b>gradient-boosting</b> classifier with a cost-based
+threshold of 0.16.</p>
+<ul>
+  <li><b>Performance:</b> it has the best ranking (statistically tied with the random forest), and its
+      test-set results are close to the CV estimates.</li>
+  <li><b>Stability:</b> its fold standard deviation is about 0.02, the same as every other model.</li>
+  <li><b>Training cost:</b> about 3 s per fit, 7× faster than the forest.</li>
+  <li><b>Interpretability:</b> its decisions are driven by sensible, explainable evidence (recent and
+      worst delays). Its probabilities are close to calibrated, so the threshold can be re-derived
+      directly if the business costs change (t* = C<sub>FP</sub>/(C<sub>FP</sub>+C<sub>FN</sub>)).</li>
+  <li><b>Fallback:</b> if a regulator demands a fully transparent scorecard, the L1-regularised
+      logistic regression costs about 0.05 PR-AUC but every coefficient can be explained.</li>
+</ul>
+<p><b>Limitations.</b></p>
+<ol>
+  <li>The data come from one bank in 2005, during Taiwan's credit-card debt crisis, so the default
+      patterns may not transfer to other times or markets.</li>
+  <li>The 5:1 cost ratio is an assumption. The threshold, though not the ranking, depends on it.</li>
+  <li>The features cannot identify defaulters with a clean history, who make up 94 % of our misses.
+      This is a ceiling no model tuning will lift.</li>
+  <li>We did not audit fairness across sex or age beyond descriptive rates.</li>
+  <li>The final model was trained on 70 % of the data and not refitted on train + validation, so that
+      the validation-chosen threshold stays valid. Refitting could add a little performance.</li>
+  <li>The random search covered 20 configurations per model. A larger budget might separate the two
+      ensembles, but they are unlikely to change the conclusion given the fold noise.</li>
+</ol>
+
+<h2>References</h2>
+<ol class="refs">
+  <li>Yeh, I.-C. (2009). <i>Default of Credit Card Clients</i> [Dataset]. UCI Machine Learning Repository. https://doi.org/10.24432/C55S3H</li>
+  <li>Yeh, I.-C., &amp; Lien, C.-H. (2009). The comparisons of data mining techniques for the predictive accuracy of probability of default of credit card clients. <i>Expert Systems with Applications</i>, 36(2), 2473–2480.</li>
+  <li>Lemaître, G., Nogueira, F., &amp; Aridas, C. K. (2017). Imbalanced-learn: A Python toolbox to tackle the curse of imbalanced datasets in machine learning. <i>JMLR</i>, 18(17), 1–5.</li>
+  <li>Chawla, N. V., Bowyer, K. W., Hall, L. O., &amp; Kegelmeyer, W. P. (2002). SMOTE: Synthetic minority over-sampling technique. <i>JAIR</i>, 16, 321–357.</li>
+  <li>Breiman, L. (2001). Random forests. <i>Machine Learning</i>, 45(1), 5–32.</li>
+  <li>Ke, G. et al. (2017). LightGBM: A highly efficient gradient boosting decision tree. <i>NeurIPS 30</i>. (Basis of scikit-learn's <code>HistGradientBoostingClassifier</code>.)</li>
+  <li>Elkan, C. (2001). The foundations of cost-sensitive learning. <i>Proc. IJCAI</i>, 973–978.</li>
+  <li>Saito, T., &amp; Rehmsmeier, M. (2015). The precision-recall plot is more informative than the ROC plot when evaluating binary classifiers on imbalanced datasets. <i>PLoS ONE</i>, 10(3), e0118432.</li>
+  <li>Pedregosa, F. et al. (2011). Scikit-learn: Machine learning in Python. <i>JMLR</i>, 12, 2825–2830.</li>
+</ol>
+
+<h2>Appendix A&nbsp; Search spaces and selected hyperparameters</h2>
+<p class="small">Randomized search, 20 draws per model, the same 5-fold stratified CV, scoring = average
+precision, seed 42.</p>
+<table>
+<thead><tr><th style="width:16%">Model</th><th style="width:52%">Search space</th><th>Selected</th></tr></thead>
+<tbody>
+<tr><td>Logistic regr.</td><td>C ~ log-uniform(10⁻³, 10²); l1_ratio ∈ {0, .25, .5, .75, 1}; solver saga</td><td>C = 0.198, l1_ratio = 1 (lasso)</td></tr>
+<tr><td>k-NN</td><td>SelectKBest k ∈ {8, 12, 16, 24, all}; n_neighbors ∈ {11, 25, 51, 75, 101, 151, 201}; weights ∈ {uniform, distance}; p ∈ {1, 2}</td><td>k = 12 features, 101 neighbours, uniform, Manhattan</td></tr>
+<tr><td>Naive Bayes</td><td>k ∈ {3, 5, 8, 12, 16, 24, all}; var_smoothing ∈ 10^{−11…−1}</td><td>k = 24, var_smoothing = 10⁻⁷</td></tr>
+<tr><td>Decision tree</td><td>max_depth ∈ {3, 4, 5, 6, 8, 10, 12, None}; min_samples_leaf ∈ {1, 10, 25, 50, 100, 200}; criterion ∈ {gini, entropy}</td><td>depth 8, min leaf 200, entropy</td></tr>
+<tr><td>Random forest</td><td>300 trees; max_depth ∈ {6, 8, 10, 14, None}; min_samples_leaf ∈ {1, 5, 10, 25, 50}; max_features ∈ {sqrt, 0.3, 0.5}</td><td>depth 10, min leaf 1, max_features 0.3</td></tr>
+<tr><td>Gradient boosting</td><td>learning_rate ~ log-uniform(0.01, 0.3); max_leaf_nodes ∈ {7, 15, 31, 63}; min_samples_leaf ∈ {20, 50, 100, 200}; l2 ~ log-uniform(10⁻³, 10); ≤ 500 iterations with early stopping</td><td>lr = 0.017, 31 leaves, min leaf 100, l2 = 0.248</td></tr>
+</tbody>
+</table>
+
+</body>
+</html>
